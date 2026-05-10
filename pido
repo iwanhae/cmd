@@ -65,7 +65,7 @@ class State:
     model = ""
     last_tool = ""
     text_started = False
-    last_thinking_len = 0
+    current_turn_text = []
 
 state = State()
 
@@ -118,6 +118,8 @@ for line in sys.stdin:
 
     elif t == "turn_start":
         state.turn += 1
+        state.current_turn_text = []
+        state.text_started = False
         stderr(f"\033[2m── turn {state.turn} ──\033[0m")
 
     elif t == "tool_execution_start":
@@ -132,17 +134,20 @@ for line in sys.stdin:
         et = ev.get("type", "")
         if et == "text_delta":
             delta = ev.get("delta", "")
+            state.current_turn_text.append(delta)
             if not state.text_started:
                 state.text_started = True
                 stderr("")  # blank line before text
-            sys.stdout.write(delta)
-            sys.stdout.flush()
+            sys.stderr.write(delta)
+            sys.stderr.flush()
 
     elif t == "agent_end":
         break
 
-if state.text_started:
-    sys.stdout.write("\n")
+if state.current_turn_text:
+    sys.stderr.write("\n")
+    sys.stderr.flush()
+    sys.stdout.write("".join(state.current_turn_text) + "\n")
     sys.stdout.flush()
 else:
     stderr("\033[31m⚠ No text output from subagent\033[0m")
@@ -202,7 +207,10 @@ for line in open('$jsonl'):
     if not line or line == 'SUBAGENT_DONE': continue
     try: d = json.loads(line)
     except: continue
-    if d.get('type') == 'message_update':
+    t = d.get('type')
+    if t == 'turn_start':
+        text_parts = []
+    elif t == 'message_update':
         ev = d.get('assistantMessageEvent', {})
         if ev.get('type') == 'text_delta':
             text_parts.append(ev.get('delta', ''))

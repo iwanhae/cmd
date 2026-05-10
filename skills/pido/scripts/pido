@@ -4,8 +4,6 @@
 # Usage:
 #   pido [options] "<prompt>"
 #   pido --list                              # list subagents
-#   pido --attach <id>                       # watch live progress
-#   pido --wait <id>                         # block until done, print result
 #   pido --result <id>                       # print final result (if done)
 
 set -euo pipefail
@@ -24,8 +22,6 @@ MODEL=""
 PROVIDER=""
 TOOLS="read,bash,grep,find,ls"
 THINKING="medium"
-ATTACH=""
-WAIT=""
 RESULT=""
 LIST=false
 PROMPT=""
@@ -37,12 +33,10 @@ while [[ $# -gt 0 ]]; do
         --provider)     PROVIDER="$2"; shift 2 ;;
         --tools)        TOOLS="$2"; shift 2 ;;
         --thinking)     THINKING="$2"; shift 2 ;;
-        --attach)       ATTACH="$2"; shift 2 ;;
-        --wait)         WAIT="$2"; shift 2 ;;
         --result)       RESULT="$2"; shift 2 ;;
         --list|-l)      LIST=true; shift ;;
         -h|--help)
-            sed -n '2,9p' "$0" | sed 's/^# //'
+            sed -n '2,7p' "$0" | sed 's/^# //'
             exit 0 ;;
         *)              PROMPT="$1"; shift ;;
     esac
@@ -217,26 +211,6 @@ else:
     sys.exit(1)
 "
     exit 0
-fi
-
-# ── Command: attach (live watch) ─────────────────────────────────────────────
-if [[ -n "$ATTACH" ]]; then
-    jsonl="$SUBAGENT_DIR/$ATTACH.jsonl"
-    if [[ ! -f "$jsonl" ]]; then
-        echo "Subagent '$ATTACH' not found." >&2; exit 1
-    fi
-    # Tail the jsonl and pipe through the parser
-    tail -n +1 -f "$jsonl" | python3 -c "$STREAM_PARSER"
-    exit 0
-fi
-
-# ── Command: wait ────────────────────────────────────────────────────────────
-if [[ -n "$WAIT" ]]; then
-    jsonl="$SUBAGENT_DIR/$WAIT.jsonl"
-    if [[ ! -f "$jsonl" ]]; then
-        echo "Subagent '$WAIT' not found." >&2; exit 1
-    fi
-    exec "$0" --result "$WAIT"
 fi
 
 # ── Validate prompt ──────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 ---
 name: pido
 description: Delegate tasks to independent subagents for context-isolated execution. Use when you need to perform parallel research or handle complex multi-step refactorings without cluttering your context with repetitive tool logs.
-compatibility: Requires bash, python3, and tmux.
+compatibility: Requires bash, python3.
 ---
 
 # pido — AI Subagent CLI
@@ -50,7 +50,7 @@ Dispatch multiple subagents sequentially to analyze different parts of the codeb
 
 ## Tips
 
-- **Always run in foreground.** Never use `&` or `--bg`.
+- **Always run in foreground.**
 - **Never mix stdout and stderr.** stdout = final response (piping `> file` or `|` is recommended); stderr = progress logs (never pipe).
 - **Set `timeout` ≥ 1800 (30 min).**
 - **One `pido` per `bash` tool call.**

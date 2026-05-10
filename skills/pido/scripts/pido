@@ -3,8 +3,7 @@
 #
 # Usage:
 #   pido [options] "<prompt>"
-#   pido --bg [options] "<prompt>"          # run in background (tmux)
-#   pido --list                              # list background agents
+#   pido --list                              # list subagents
 #   pido --attach <id>                       # watch live progress
 #   pido --wait <id>                         # block until done, print result
 #   pido --result <id>                       # print final result (if done)
@@ -12,7 +11,7 @@
 set -euo pipefail
 
 # ── Config ───────────────────────────────────────────────────────────────────
-SUBAGENT_DIR="/tmp/pido"
+SUBAGENT_DIR="./.pido"
 PI="${PI:-pi}"
 
 # ── Colors ───────────────────────────────────────────────────────────────────
@@ -25,7 +24,6 @@ MODEL=""
 PROVIDER=""
 TOOLS="read,bash,grep,find,ls"
 THINKING="medium"
-BG=false
 ATTACH=""
 WAIT=""
 RESULT=""
@@ -39,7 +37,6 @@ while [[ $# -gt 0 ]]; do
         --provider)     PROVIDER="$2"; shift 2 ;;
         --tools)        TOOLS="$2"; shift 2 ;;
         --thinking)     THINKING="$2"; shift 2 ;;
-        --bg)           BG=true; shift ;;
         --attach)       ATTACH="$2"; shift 2 ;;
         --wait)         WAIT="$2"; shift 2 ;;
         --result)       RESULT="$2"; shift 2 ;;
@@ -177,18 +174,11 @@ if $LIST; then
         found=1
         id=$(basename "$meta" .meta)
         source "$meta"
-        pid_file="$SUBAGENT_DIR/$id.pid"
-        status="running"
-        if [[ -f "$pid_file" ]] && ! kill -0 "$(cat "$pid_file")" 2>/dev/null; then
-            status="done"
-        elif [[ ! -f "$pid_file" ]]; then
-            status="done"
-        fi
-        echo -e "  ${CYAN}$id${RESET}  status=$status  model=${SA_MODEL:-?}  tools=${SA_TOOLS:-?}"
+        echo -e "  ${CYAN}$id${RESET}  model=${SA_MODEL:-?}  tools=${SA_TOOLS:-?}"
         echo -e "    prompt: ${DIM}${SA_PROMPT:0:80}${RESET}"
     done
     if [[ $found -eq 0 ]]; then
-        echo "No background subagents running."
+        echo "No subagents."
     fi
     exit 0
 fi
@@ -243,19 +233,9 @@ fi
 # ── Command: wait ────────────────────────────────────────────────────────────
 if [[ -n "$WAIT" ]]; then
     jsonl="$SUBAGENT_DIR/$WAIT.jsonl"
-    meta="$SUBAGENT_DIR/$WAIT.meta"
-    pid_file="$SUBAGENT_DIR/$WAIT.pid"
     if [[ ! -f "$jsonl" ]]; then
         echo "Subagent '$WAIT' not found." >&2; exit 1
     fi
-    # Wait for process to finish
-    if [[ -f "$pid_file" ]]; then
-        pid=$(cat "$pid_file")
-        echo -e "Waiting for subagent ${CYAN}$WAIT${RESET} (pid $pid)..." >&2
-        while kill -0 "$pid" 2>/dev/null; do sleep 2; done
-        echo "Done." >&2
-    fi
-    # Print result
     exec "$0" --result "$WAIT"
 fi
 
@@ -265,23 +245,15 @@ if [[ -z "$PROMPT" ]]; then
     exit 1
 fi
 
-# ── Foreground mode ─────────────────────────────────────────────────────────
-if ! $BG; then
-    pi_args=$(build_pi_args)
-    echo -e "⚡ Starting subagent" >&2
-    $PI $pi_args "$PROMPT" | python3 -c "$STREAM_PARSER"
-    exit ${PIPESTATUS[0]}
-fi
-
-# ── Background mode ──────────────────────────────────────────────────────────
+# ── Run subagent ─────────────────────────────────────────────────────────────
 id=$(gen_id)
 jsonl="$SUBAGENT_DIR/$id.jsonl"
+result_file="$SUBAGENT_DIR/$id.result"
+stderr_file="$SUBAGENT_DIR/$id.stderr"
 meta="$SUBAGENT_DIR/$id.meta"
-pid_file="$SUBAGENT_DIR/$id.pid"
-script_file="$SUBAGENT_DIR/$id.sh"
 
-# Write metadata
-cat > "$SUBAGENT_DIR/$id.meta" <<META
+# Save metadata
+cat > "$meta" <<META
 SA_ID="$id"
 SA_MODEL="${MODEL:-default}"
 SA_TOOLS="$TOOLS"
@@ -290,27 +262,9 @@ SA_PROMPT="$(echo "$PROMPT" | head -c 200 | sed "s/'/'\\\\''/g")"
 SA_STARTED=$(date +%s)
 META
 
-# Write runner script
 pi_args=$(build_pi_args)
-cat > "$script_file" <<SCRIPT
-#!/bin/bash
-$PI $pi_args '$(echo "$PROMPT" | sed "s/'/'\\\\''/g")' > '$jsonl' 2>'$SUBAGENT_DIR/$id.stderr'
-echo 'SUBAGENT_DONE' >> '$jsonl'
-SCRIPT
-chmod +x "$script_file"
-
-# Start in tmux
-tmux new-session -d -s "$id" "bash $script_file" 2>/dev/null || {
-    echo "Failed to create tmux session. Is tmux running?" >&2
-    exit 1
-}
-
-# Record PID (tmux session pane PID)
-sleep 0.5
-tmux list-panes -t "$id" -F '#{pane_pid}' > "$pid_file" 2>/dev/null || true
-
-echo -e "📋 Subagent ${CYAN}$id${RESET} running in background"
-echo -e "   Watch live:  ${GREEN}pido --attach $id${RESET}"
-echo -e "   Wait & show: ${GREEN}pido --wait $id${RESET}"
-echo -e "   Get result:  ${GREEN}pido --result $id${RESET}"
-echo -e "   List all:    ${GREEN}pido --list${RESET}"
+echo -e "⚡ Starting subagent ${CYAN}$id${RESET}" >&2
+$PI $pi_args "$PROMPT" 2>"$stderr_file" | tee "$jsonl" | python3 -c "$STREAM_PARSER" | tee "$result_file"
+rc=${PIPESTATUS[0]}
+echo 'SUBAGENT_DONE' >> "$jsonl"
+exit $rc

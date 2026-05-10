@@ -1,0 +1,302 @@
+#!/usr/bin/env bash
+# pido — Run pi in background with live progress streaming
+# pido = "pi do"
+# Usage:
+#   pido [options] "<prompt>"
+#   pido --bg [options] "<prompt>"          # run in background (tmux)
+#   pido --list                              # list background agents
+#   pido --attach <id>                       # watch live progress
+#   pido --wait <id>                         # block until done, print result
+#   pido --result <id>                       # print final result (if done)
+
+set -euo pipefail
+
+# ── Config ───────────────────────────────────────────────────────────────────
+PIDO_DIR="/tmp/pido"
+PI="${PI:-pi}"
+
+# ── Colors ───────────────────────────────────────────────────────────────────
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'
+BLUE='\033[0;34m'; CYAN='\033[0;36m'; BOLD='\033[1m'
+DIM='\033[2m'; RESET='\033[0m'
+
+# ── Defaults ─────────────────────────────────────────────────────────────────
+MODEL=""
+PROVIDER=""
+TOOLS="read,bash,grep,find,ls"
+THINKING="medium"
+BG=false
+ATTACH=""
+WAIT=""
+RESULT=""
+LIST=false
+PROMPT=""
+
+# ── Parse Args ───────────────────────────────────────────────────────────────
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --model)        MODEL="$2"; shift 2 ;;
+        --provider)     PROVIDER="$2"; shift 2 ;;
+        --tools)        TOOLS="$2"; shift 2 ;;
+        --thinking)     THINKING="$2"; shift 2 ;;
+        --bg)           BG=true; shift ;;
+        --attach)       ATTACH="$2"; shift 2 ;;
+        --wait)         WAIT="$2"; shift 2 ;;
+        --result)       RESULT="$2"; shift 2 ;;
+        --list|-l)      LIST=true; shift ;;
+        -h|--help)
+            sed -n '2,3p' "$0" | sed 's/^# //'
+            exit 0 ;;
+        *)              PROMPT="$1"; shift ;;
+    esac
+done
+
+# ── Ensure dir ───────────────────────────────────────────────────────────────
+mkdir -p "$PIDO_DIR"
+
+# ── Python streaming parser ─────────────────────────────────────────────────
+# Reads JSONL from stdin. Progress → stderr, final text → stdout
+STREAM_PARSER='
+import sys, json, time
+
+class State:
+    turn = 0
+    tool_calls = 0
+    model = ""
+    last_tool = ""
+    text_started = False
+    last_thinking_len = 0
+
+state = State()
+
+def stderr(s):
+    sys.stderr.write(s + "\n")
+    sys.stderr.flush()
+
+def short_tool_detail(name, args):
+    if name == "bash":
+        cmd = args.get("command", "")
+        return cmd[:70]
+    elif name == "read":
+        return args.get("path", "")[:70]
+    elif name == "grep":
+        return args.get("pattern", "")[:50]
+    elif name == "find":
+        return args.get("pattern", "*")[:50]
+    elif name == "ls":
+        return args.get("path", "")[:70]
+    elif name == "edit":
+        return args.get("path", "")[:70]
+    elif name == "write":
+        return args.get("path", "")[:70]
+    return ""
+
+def format_tool(name, args):
+    detail = short_tool_detail(name, args)
+    if detail:
+        return f"  \033[33m🔧 {name}\033[0m {detail}"
+    return f"  \033[33m🔧 {name}\033[0m"
+
+for line in sys.stdin:
+    line = line.strip()
+    if not line: continue
+    if line == "PIDO_DONE":
+        break
+    try:
+        d = json.loads(line)
+    except:
+        continue
+
+    t = d.get("type", "")
+
+    if t == "message_start":
+        msg = d.get("message", {})
+        if msg.get("role") == "assistant":
+            m = msg.get("model", "")
+            if m:
+                state.model = m
+
+    elif t == "turn_start":
+        state.turn += 1
+        stderr(f"\033[2m── turn {state.turn} ──\033[0m")
+
+    elif t == "tool_execution_start":
+        state.tool_calls += 1
+        name = d.get("toolName", "?")
+        args = d.get("args", d.get("arguments", {}))
+        state.last_tool = name
+        stderr(format_tool(name, args))
+
+    elif t == "message_update":
+        ev = d.get("assistantMessageEvent", {})
+        et = ev.get("type", "")
+        if et == "text_delta":
+            delta = ev.get("delta", "")
+            if not state.text_started:
+                state.text_started = True
+                stderr("")  # blank line before text
+            sys.stdout.write(delta)
+            sys.stdout.flush()
+
+    elif t == "agent_end":
+        break
+
+if state.text_started:
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+else:
+    stderr("\033[31m⚠ No text output from pido\033[0m")
+'
+
+# ── Build pi args ────────────────────────────────────────────────────────────
+build_pi_args() {
+    local args=(--mode json -p --no-session --thinking "$THINKING" --tools "$TOOLS")
+    [[ -n "$MODEL" ]]    && args+=(--model "$MODEL")
+    [[ -n "$PROVIDER" ]] && args+=(--provider "$PROVIDER")
+    echo "${args[@]}"
+}
+
+# ── Generate session ID ─────────────────────────────────────────────────────
+gen_id() {
+    local ts=$(date +%s)
+    local r=$RANDOM
+    echo "pido-${ts}-${r}"
+}
+
+# ── Command: list ────────────────────────────────────────────────────────────
+if $LIST; then
+    found=0
+    for meta in "$PIDO_DIR"/*.meta; do
+        [[ -f "$meta" ]] || continue
+        found=1
+        id=$(basename "$meta" .meta)
+        source "$meta"
+        pid_file="$PIDO_DIR/$id.pid"
+        status="running"
+        if [[ -f "$pid_file" ]] && ! kill -0 "$(cat "$pid_file")" 2>/dev/null; then
+            status="done"
+        elif [[ ! -f "$pid_file" ]]; then
+            status="done"
+        fi
+        echo -e "  ${CYAN}$id${RESET}  status=$status  model=${PD_MODEL:-?}  tools=${PD_TOOLS:-?}"
+        echo -e "    prompt: ${DIM}${PD_PROMPT:0:80}${RESET}"
+    done
+    if [[ $found -eq 0 ]]; then
+        echo "No background pido agents running."
+    fi
+    exit 0
+fi
+
+# ── Command: result ──────────────────────────────────────────────────────────
+if [[ -n "$RESULT" ]]; then
+    jsonl="$PIDO_DIR/$RESULT.jsonl"
+    if [[ ! -f "$jsonl" ]]; then
+        echo "Pido '$RESULT' not found." >&2; exit 1
+    fi
+    python3 -c "
+import sys, json
+text_parts = []
+in_final = False
+for line in open('$jsonl'):
+    line = line.strip()
+    if not line or line == 'PIDO_DONE': continue
+    try: d = json.loads(line)
+    except: continue
+    if d.get('type') == 'message_update':
+        ev = d.get('assistantMessageEvent', {})
+        if ev.get('type') == 'text_delta':
+            text_parts.append(ev.get('delta', ''))
+if text_parts:
+    print(''.join(text_parts))
+else:
+    print('(no text output)', file=sys.stderr)
+    sys.exit(1)
+"
+    exit 0
+fi
+
+# ── Command: attach (live watch) ─────────────────────────────────────────────
+if [[ -n "$ATTACH" ]]; then
+    jsonl="$PIDO_DIR/$ATTACH.jsonl"
+    if [[ ! -f "$jsonl" ]]; then
+        echo "Pido '$ATTACH' not found." >&2; exit 1
+    fi
+    # Tail the jsonl and pipe through the parser
+    tail -n +1 -f "$jsonl" | python3 -c "$STREAM_PARSER"
+    exit 0
+fi
+
+# ── Command: wait ────────────────────────────────────────────────────────────
+if [[ -n "$WAIT" ]]; then
+    jsonl="$PIDO_DIR/$WAIT.jsonl"
+    meta="$PIDO_DIR/$WAIT.meta"
+    pid_file="$PIDO_DIR/$WAIT.pid"
+    if [[ ! -f "$jsonl" ]]; then
+        echo "Pido '$WAIT' not found." >&2; exit 1
+    fi
+    # Wait for process to finish
+    if [[ -f "$pid_file" ]]; then
+        pid=$(cat "$pid_file")
+        echo -e "Waiting for pido ${CYAN}$WAIT${RESET} (pid $pid)..." >&2
+        while kill -0 "$pid" 2>/dev/null; do sleep 2; done
+        echo "Done." >&2
+    fi
+    # Print result
+    exec "$0" --result "$WAIT"
+fi
+
+# ── Validate prompt ──────────────────────────────────────────────────────────
+if [[ -z "$PROMPT" ]]; then
+    echo "Error: no prompt provided. Use --help for usage." >&2
+    exit 1
+fi
+
+# ── Foreground mode ─────────────────────────────────────────────────────────
+if ! $BG; then
+    pi_args=$(build_pi_args)
+    echo -e "⚡ Starting pido" >&2
+    $PI $pi_args "$PROMPT" | python3 -c "$STREAM_PARSER"
+    exit ${PIPESTATUS[0]}
+fi
+
+# ── Background mode ──────────────────────────────────────────────────────────
+id=$(gen_id)
+jsonl="$PIDO_DIR/$id.jsonl"
+meta="$PIDO_DIR/$id.meta"
+pid_file="$PIDO_DIR/$id.pid"
+script_file="$PIDO_DIR/$id.sh"
+
+# Write metadata
+cat > "$PIDO_DIR/$id.meta" <<META
+PD_ID="$id"
+PD_MODEL="${MODEL:-default}"
+PD_TOOLS="$TOOLS"
+PD_THINKING="$THINKING"
+PD_PROMPT="$(echo "$PROMPT" | head -c 200 | sed "s/'/'\\\\''/g")"
+PD_STARTED=$(date +%s)
+META
+
+# Write runner script
+pi_args=$(build_pi_args)
+cat > "$script_file" <<SCRIPT
+#!/bin/bash
+$PI $pi_args '$(echo "$PROMPT" | sed "s/'/'\\\\''/g")' > '$jsonl' 2>'$PIDO_DIR/$id.stderr'
+echo 'PIDO_DONE' >> '$jsonl'
+SCRIPT
+chmod +x "$script_file"
+
+# Start in tmux
+tmux new-session -d -s "$id" "bash $script_file" 2>/dev/null || {
+    echo "Failed to create tmux session. Is tmux running?" >&2
+    exit 1
+}
+
+# Record PID (tmux session pane PID)
+sleep 0.5
+tmux list-panes -t "$id" -F '#{panePid}' > "$pid_file" 2>/dev/null || true
+
+echo -e "📋 Pido ${CYAN}$id${RESET} running in background"
+echo -e "   Watch live:  ${GREEN}pido --attach $id${RESET}"
+echo -e "   Wait & show: ${GREEN}pido --wait $id${RESET}"
+echo -e "   Get result:  ${GREEN}pido --result $id${RESET}"
+echo -e "   List all:    ${GREEN}pido --list${RESET}"

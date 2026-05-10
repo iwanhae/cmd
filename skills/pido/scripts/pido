@@ -7,6 +7,7 @@
 set -euo pipefail
 
 PI="${PI:-pi}"
+PIDO_DIR=".pido"
 
 # ── Defaults ─────────────────────────────────────────────────────────────────
 MODEL=""
@@ -124,5 +125,14 @@ if [[ -z "$PROMPT" ]]; then
     exit 1
 fi
 
+# ── Helpers ──────────────────────────────────────────────────────────────────
+rfc3339() {
+    python3 -c "import datetime; dt=datetime.datetime.now(); tz=dt.astimezone().strftime('%z'); print(dt.strftime('%Y-%m-%dT%H:%M:%S.')+f'{dt.microsecond//1000:03d}'+tz[:-2]+':'+tz[-2:])"
+}
+
 # ── Run ──────────────────────────────────────────────────────────────────────
-$PI "${args[@]}" "$PROMPT" 2>&1 | python3 -c "$STREAM_PARSER"
+mkdir -p "$PIDO_DIR"
+TS=$(rfc3339)
+STDERR_FILE="$PIDO_DIR/$TS.stderr"
+
+$PI "${args[@]}" "$PROMPT" 2> "$STDERR_FILE" | tee "$PIDO_DIR/$TS.stdout" | python3 -c "$STREAM_PARSER"

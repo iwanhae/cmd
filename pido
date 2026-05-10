@@ -308,7 +308,7 @@ tmux new-session -d -s "$id" "bash $script_file" 2>/dev/null || {
 
 # Record PID (tmux session pane PID)
 sleep 0.5
-tmux list-panes -t "$id" -F '#{panePid}' > "$pid_file" 2>/dev/null || true
+tmux list-panes -t "$id" -F '#{pane_pid}' > "$pid_file" 2>/dev/null || true
 
 echo -e "📋 Subagent ${CYAN}$id${RESET} running in background"
 echo -e "   Watch live:  ${GREEN}pido --attach $id${RESET}"

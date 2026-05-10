@@ -1,6 +1,6 @@
 ---
 name: pido
-description: Delegate tasks to independent subagents for parallel research or context-isolated execution. Use when you need to run background tasks, perform parallel research, or handle complex multi-step refactorings without cluttering your context with repetitive tool logs.
+description: Delegate tasks to independent subagents for context-isolated execution. Use when you need to perform parallel research or handle complex multi-step refactorings without cluttering your context with repetitive tool logs.
 compatibility: Requires bash, python3, and tmux.
 ---
 
@@ -10,7 +10,6 @@ compatibility: Requires bash, python3, and tmux.
 
 ## Core Features
 
-- **Background Execution:** Run tasks in detached `tmux` sessions.
 - **Stream Separation:** Live progress goes to `stderr`, while only the final response is sent to `stdout`.
 - **Context Isolation:** Subagents perform their own tool loops (read, edit, test) without bloating your history.
 
@@ -20,30 +19,13 @@ The subagent script is located at `scripts/pido`.
 
 ### 1. Subagent Execution
 
-#### Foreground (Blocking)
-
 Blocks until the subagent completes. Use this to perform complex logic where you only care about the final outcome.
 
 ```bash
-./scripts/pido [options] "<prompt>"
+pido [options] "<prompt>"
 ```
 
-#### Background (Non-blocking)
-
-Immediately returns a Job ID (e.g., `sub-1715345678-1234`).
-
-```bash
-./scripts/pido --bg [options] "<prompt>"
-```
-
-### 2. Management Commands
-
-- **List subagents:** `./scripts/pido --list`
-- **Watch live progress:** `./scripts/pido --attach <id>`
-- **Wait & get result:** `./scripts/pido --wait <id>`
-- **Get final result:** `./scripts/pido --result <id>`
-
-### 3. Configuration Options
+### 2. Configuration Options
 
 - `--tools <list>`: Comma-separated tools for the subagent (default: `read,bash,grep,find,ls`). **Add `edit` or `write` if the subagent needs to modify files.**
 
@@ -56,18 +38,23 @@ Immediately returns a Job ID (e.g., `sub-1715345678-1234`).
 Use `pido` in the foreground to refactor code. The subagent will handle all the `read` and `edit` turns, and you will only receive the final summary of changes.
 
 ```bash
-./scripts/pido --tools "read,bash,edit" "Refactor the stream parser in scripts/pido to use argparse."
+pido --tools "read,bash,edit" "Refactor the stream parser in pido to use argparse." > result_refactoring_argparse.md
 ```
 
 ### Parallel Research & Audit
 
-Dispatch multiple subagents to analyze different parts of the codebase simultaneously.
+Dispatch multiple subagents sequentially to analyze different parts of the codebase.
 
-1. `./scripts/pido --bg "Scan the project for potential SQL injection vulnerabilities."`
-2. `./scripts/pido --bg "Audit the new authentication module for race conditions."`
-3. Use `./scripts/pido --list` to monitor status.
-4. Use `./scripts/pido --result <id>` to ingest findings once they are `done`.
+1. `pido "Scan the project for potential SQL injection vulnerabilities."`
+2. `pido "Audit the new authentication module for race conditions."`
+
+## Tips
+
+- **Never pipe stderr.** Execution logs are emitted to `stderr` to show progress — piping or redirecting them removes useful visibility.
+- **Piping stdout is recommended.** Redirecting stdout (`> file` or `|`) lets you see clean output without progress logs cluttering the view.
+- **Set a generous timeout (≥30 min).** Always specify `timeout` ≥ 30 minutes (1800 seconds) when calling `pido` via `bash` to avoid premature termination.
+- **Run one `pido` per `bash` tool call.** Prefer multiple `bash` tool calls (one per `pido` invocation) over combining several `pido` commands in a single `bash` call.
 
 ## Available Scripts
 
-- **scripts/pido** — The core subagent wrapper script.
+- `pido` — The core subagent wrapper script.

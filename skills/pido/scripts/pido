@@ -135,4 +135,4 @@ mkdir -p "$PIDO_DIR"
 TS=$(rfc3339)
 STDERR_FILE="$PIDO_DIR/$TS.stderr"
 
-$PI "${args[@]}" "$PROMPT" 2> "$STDERR_FILE" | tee "$PIDO_DIR/$TS.stdout" | python3 -c "$STREAM_PARSER"
+$PI "${args[@]}" "$PROMPT" 2> "$STDERR_FILE" | python3 -c "$STREAM_PARSER" | tee "$PIDO_DIR/$TS.stdout"

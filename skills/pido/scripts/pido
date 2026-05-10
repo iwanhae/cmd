@@ -76,19 +76,19 @@ def stderr(s):
 def short_tool_detail(name, args):
     if name == "bash":
         cmd = args.get("command", "")
-        return cmd[:70]
+        return cmd[:200]
     elif name == "read":
-        return args.get("path", "")[:70]
+        return args.get("path", "")[:200]
     elif name == "grep":
-        return args.get("pattern", "")[:50]
+        return args.get("pattern", "")[:150]
     elif name == "find":
-        return args.get("pattern", "*")[:50]
+        return args.get("pattern", "*")[:150]
     elif name == "ls":
-        return args.get("path", "")[:70]
+        return args.get("path", "")[:200]
     elif name == "edit":
-        return args.get("path", "")[:70]
+        return args.get("path", "")[:200]
     elif name == "write":
-        return args.get("path", "")[:70]
+        return args.get("path", "")[:200]
     return ""
 
 def format_tool(name, args):
@@ -123,6 +123,9 @@ for line in sys.stdin:
         stderr(f"\033[2m── turn {state.turn} ──\033[0m")
 
     elif t == "tool_execution_start":
+        if state.current_turn_text != []:
+            stderr("".join(state.current_turn_text).strip())
+            state.current_turn_text = []
         state.tool_calls += 1
         name = d.get("toolName", "?")
         args = d.get("args", d.get("arguments", {}))
@@ -140,15 +143,11 @@ for line in sys.stdin:
                     continue
                 state.text_started = True
             state.current_turn_text.append(delta)
-            sys.stderr.write(delta)
-            sys.stderr.flush()
 
     elif t == "agent_end":
         break
 
 if state.current_turn_text:
-    sys.stderr.write("\n")
-    sys.stderr.flush()
     sys.stdout.write("".join(state.current_turn_text) + "\n")
     sys.stdout.flush()
 else:

@@ -50,10 +50,10 @@ Dispatch multiple subagents sequentially to analyze different parts of the codeb
 
 ## Tips
 
-- **Never pipe stderr.** Execution logs are emitted to `stderr` to show progress — piping or redirecting them removes useful visibility.
-- **Piping stdout is recommended.** Redirecting stdout (`> file` or `|`) lets you see clean output without progress logs cluttering the view.
-- **Set a generous timeout (≥30 min).** Always specify `timeout` ≥ 30 minutes (1800 seconds) when calling `pido` via `bash` to avoid premature termination.
-- **Run one `pido` per `bash` tool call.** Prefer multiple `bash` tool calls (one per `pido` invocation) over combining several `pido` commands in a single `bash` call.
+- **Always run in foreground.** Never use `&` or `--bg`.
+- **Never mix stdout and stderr.** stdout = final response (piping `> file` or `|` is recommended); stderr = progress logs (never pipe).
+- **Set `timeout` ≥ 1800 (30 min).**
+- **One `pido` per `bash` tool call.**
 
 ## Available Scripts
 

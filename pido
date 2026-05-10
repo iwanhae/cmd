@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# pido — Run pi in background with live progress streaming
-# pido = "pi do"
+# pido — Run pi as a subagent with live progress streaming
+#
 # Usage:
 #   pido [options] "<prompt>"
 #   pido --bg [options] "<prompt>"          # run in background (tmux)
@@ -12,7 +12,7 @@
 set -euo pipefail
 
 # ── Config ───────────────────────────────────────────────────────────────────
-PIDO_DIR="/tmp/pido"
+SUBAGENT_DIR="/tmp/pido"
 PI="${PI:-pi}"
 
 # ── Colors ───────────────────────────────────────────────────────────────────
@@ -45,14 +45,14 @@ while [[ $# -gt 0 ]]; do
         --result)       RESULT="$2"; shift 2 ;;
         --list|-l)      LIST=true; shift ;;
         -h|--help)
-            sed -n '2,3p' "$0" | sed 's/^# //'
+            sed -n '2,9p' "$0" | sed 's/^# //'
             exit 0 ;;
         *)              PROMPT="$1"; shift ;;
     esac
 done
 
 # ── Ensure dir ───────────────────────────────────────────────────────────────
-mkdir -p "$PIDO_DIR"
+mkdir -p "$SUBAGENT_DIR"
 
 # ── Python streaming parser ─────────────────────────────────────────────────
 # Reads JSONL from stdin. Progress → stderr, final text → stdout
@@ -100,7 +100,7 @@ def format_tool(name, args):
 for line in sys.stdin:
     line = line.strip()
     if not line: continue
-    if line == "PIDO_DONE":
+    if line == "SUBAGENT_DONE":
         break
     try:
         d = json.loads(line)
@@ -145,7 +145,7 @@ if state.text_started:
     sys.stdout.write("\n")
     sys.stdout.flush()
 else:
-    stderr("\033[31m⚠ No text output from pido\033[0m")
+    stderr("\033[31m⚠ No text output from subagent\033[0m")
 '
 
 # ── Build pi args ────────────────────────────────────────────────────────────
@@ -160,38 +160,38 @@ build_pi_args() {
 gen_id() {
     local ts=$(date +%s)
     local r=$RANDOM
-    echo "pido-${ts}-${r}"
+    echo "sub-${ts}-${r}"
 }
 
 # ── Command: list ────────────────────────────────────────────────────────────
 if $LIST; then
     found=0
-    for meta in "$PIDO_DIR"/*.meta; do
+    for meta in "$SUBAGENT_DIR"/*.meta; do
         [[ -f "$meta" ]] || continue
         found=1
         id=$(basename "$meta" .meta)
         source "$meta"
-        pid_file="$PIDO_DIR/$id.pid"
+        pid_file="$SUBAGENT_DIR/$id.pid"
         status="running"
         if [[ -f "$pid_file" ]] && ! kill -0 "$(cat "$pid_file")" 2>/dev/null; then
             status="done"
         elif [[ ! -f "$pid_file" ]]; then
             status="done"
         fi
-        echo -e "  ${CYAN}$id${RESET}  status=$status  model=${PD_MODEL:-?}  tools=${PD_TOOLS:-?}"
-        echo -e "    prompt: ${DIM}${PD_PROMPT:0:80}${RESET}"
+        echo -e "  ${CYAN}$id${RESET}  status=$status  model=${SA_MODEL:-?}  tools=${SA_TOOLS:-?}"
+        echo -e "    prompt: ${DIM}${SA_PROMPT:0:80}${RESET}"
     done
     if [[ $found -eq 0 ]]; then
-        echo "No background pido agents running."
+        echo "No background subagents running."
     fi
     exit 0
 fi
 
 # ── Command: result ──────────────────────────────────────────────────────────
 if [[ -n "$RESULT" ]]; then
-    jsonl="$PIDO_DIR/$RESULT.jsonl"
+    jsonl="$SUBAGENT_DIR/$RESULT.jsonl"
     if [[ ! -f "$jsonl" ]]; then
-        echo "Pido '$RESULT' not found." >&2; exit 1
+        echo "Subagent '$RESULT' not found." >&2; exit 1
     fi
     python3 -c "
 import sys, json
@@ -199,7 +199,7 @@ text_parts = []
 in_final = False
 for line in open('$jsonl'):
     line = line.strip()
-    if not line or line == 'PIDO_DONE': continue
+    if not line or line == 'SUBAGENT_DONE': continue
     try: d = json.loads(line)
     except: continue
     if d.get('type') == 'message_update':
@@ -217,9 +217,9 @@ fi
 
 # ── Command: attach (live watch) ─────────────────────────────────────────────
 if [[ -n "$ATTACH" ]]; then
-    jsonl="$PIDO_DIR/$ATTACH.jsonl"
+    jsonl="$SUBAGENT_DIR/$ATTACH.jsonl"
     if [[ ! -f "$jsonl" ]]; then
-        echo "Pido '$ATTACH' not found." >&2; exit 1
+        echo "Subagent '$ATTACH' not found." >&2; exit 1
     fi
     # Tail the jsonl and pipe through the parser
     tail -n +1 -f "$jsonl" | python3 -c "$STREAM_PARSER"
@@ -228,16 +228,16 @@ fi
 
 # ── Command: wait ────────────────────────────────────────────────────────────
 if [[ -n "$WAIT" ]]; then
-    jsonl="$PIDO_DIR/$WAIT.jsonl"
-    meta="$PIDO_DIR/$WAIT.meta"
-    pid_file="$PIDO_DIR/$WAIT.pid"
+    jsonl="$SUBAGENT_DIR/$WAIT.jsonl"
+    meta="$SUBAGENT_DIR/$WAIT.meta"
+    pid_file="$SUBAGENT_DIR/$WAIT.pid"
     if [[ ! -f "$jsonl" ]]; then
-        echo "Pido '$WAIT' not found." >&2; exit 1
+        echo "Subagent '$WAIT' not found." >&2; exit 1
     fi
     # Wait for process to finish
     if [[ -f "$pid_file" ]]; then
         pid=$(cat "$pid_file")
-        echo -e "Waiting for pido ${CYAN}$WAIT${RESET} (pid $pid)..." >&2
+        echo -e "Waiting for subagent ${CYAN}$WAIT${RESET} (pid $pid)..." >&2
         while kill -0 "$pid" 2>/dev/null; do sleep 2; done
         echo "Done." >&2
     fi
@@ -254,34 +254,34 @@ fi
 # ── Foreground mode ─────────────────────────────────────────────────────────
 if ! $BG; then
     pi_args=$(build_pi_args)
-    echo -e "⚡ Starting pido" >&2
+    echo -e "⚡ Starting subagent" >&2
     $PI $pi_args "$PROMPT" | python3 -c "$STREAM_PARSER"
     exit ${PIPESTATUS[0]}
 fi
 
 # ── Background mode ──────────────────────────────────────────────────────────
 id=$(gen_id)
-jsonl="$PIDO_DIR/$id.jsonl"
-meta="$PIDO_DIR/$id.meta"
-pid_file="$PIDO_DIR/$id.pid"
-script_file="$PIDO_DIR/$id.sh"
+jsonl="$SUBAGENT_DIR/$id.jsonl"
+meta="$SUBAGENT_DIR/$id.meta"
+pid_file="$SUBAGENT_DIR/$id.pid"
+script_file="$SUBAGENT_DIR/$id.sh"
 
 # Write metadata
-cat > "$PIDO_DIR/$id.meta" <<META
-PD_ID="$id"
-PD_MODEL="${MODEL:-default}"
-PD_TOOLS="$TOOLS"
-PD_THINKING="$THINKING"
-PD_PROMPT="$(echo "$PROMPT" | head -c 200 | sed "s/'/'\\\\''/g")"
-PD_STARTED=$(date +%s)
+cat > "$SUBAGENT_DIR/$id.meta" <<META
+SA_ID="$id"
+SA_MODEL="${MODEL:-default}"
+SA_TOOLS="$TOOLS"
+SA_THINKING="$THINKING"
+SA_PROMPT="$(echo "$PROMPT" | head -c 200 | sed "s/'/'\\\\''/g")"
+SA_STARTED=$(date +%s)
 META
 
 # Write runner script
 pi_args=$(build_pi_args)
 cat > "$script_file" <<SCRIPT
 #!/bin/bash
-$PI $pi_args '$(echo "$PROMPT" | sed "s/'/'\\\\''/g")' > '$jsonl' 2>'$PIDO_DIR/$id.stderr'
-echo 'PIDO_DONE' >> '$jsonl'
+$PI $pi_args '$(echo "$PROMPT" | sed "s/'/'\\\\''/g")' > '$jsonl' 2>'$SUBAGENT_DIR/$id.stderr'
+echo 'SUBAGENT_DONE' >> '$jsonl'
 SCRIPT
 chmod +x "$script_file"
 
@@ -295,7 +295,7 @@ tmux new-session -d -s "$id" "bash $script_file" 2>/dev/null || {
 sleep 0.5
 tmux list-panes -t "$id" -F '#{panePid}' > "$pid_file" 2>/dev/null || true
 
-echo -e "📋 Pido ${CYAN}$id${RESET} running in background"
+echo -e "📋 Subagent ${CYAN}$id${RESET} running in background"
 echo -e "   Watch live:  ${GREEN}pido --attach $id${RESET}"
 echo -e "   Wait & show: ${GREEN}pido --wait $id${RESET}"
 echo -e "   Get result:  ${GREEN}pido --result $id${RESET}"

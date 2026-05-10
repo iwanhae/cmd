@@ -134,10 +134,12 @@ for line in sys.stdin:
         et = ev.get("type", "")
         if et == "text_delta":
             delta = ev.get("delta", "")
-            state.current_turn_text.append(delta)
             if not state.text_started:
+                delta = delta.lstrip("\n")
+                if not delta:
+                    continue
                 state.text_started = True
-                stderr("")  # blank line before text
+            state.current_turn_text.append(delta)
             sys.stderr.write(delta)
             sys.stderr.flush()
 
@@ -213,7 +215,12 @@ for line in open('$jsonl'):
     elif t == 'message_update':
         ev = d.get('assistantMessageEvent', {})
         if ev.get('type') == 'text_delta':
-            text_parts.append(ev.get('delta', ''))
+            delta = ev.get('delta', '')
+            if not text_parts:
+                delta = delta.lstrip('\n')
+                if not delta:
+                    continue
+            text_parts.append(delta)
 if text_parts:
     print(''.join(text_parts))
 else:

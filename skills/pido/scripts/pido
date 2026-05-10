@@ -3,27 +3,16 @@
 #
 # Usage:
 #   pido [options] "<prompt>"
-#   pido --list                              # list subagents
-#   pido --result <id>                       # print final result (if done)
 
 set -euo pipefail
 
-# ── Config ───────────────────────────────────────────────────────────────────
-SUBAGENT_DIR="./.pido"
 PI="${PI:-pi}"
-
-# ── Colors ───────────────────────────────────────────────────────────────────
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'
-BLUE='\033[0;34m'; CYAN='\033[0;36m'; BOLD='\033[1m'
-DIM='\033[2m'; RESET='\033[0m'
 
 # ── Defaults ─────────────────────────────────────────────────────────────────
 MODEL=""
 PROVIDER=""
 TOOLS="read,bash,grep,find,ls"
 THINKING="medium"
-RESULT=""
-LIST=false
 PROMPT=""
 
 # ── Parse Args ───────────────────────────────────────────────────────────────
@@ -33,28 +22,20 @@ while [[ $# -gt 0 ]]; do
         --provider)     PROVIDER="$2"; shift 2 ;;
         --tools)        TOOLS="$2"; shift 2 ;;
         --thinking)     THINKING="$2"; shift 2 ;;
-        --result)       RESULT="$2"; shift 2 ;;
-        --list|-l)      LIST=true; shift ;;
         -h|--help)
-            sed -n '2,7p' "$0" | sed 's/^# //'
+            sed -n '2,5p' "$0" | sed 's/^# //'
             exit 0 ;;
         *)              PROMPT="$1"; shift ;;
     esac
 done
 
-# ── Ensure dir ───────────────────────────────────────────────────────────────
-mkdir -p "$SUBAGENT_DIR"
-
 # ── Python streaming parser ─────────────────────────────────────────────────
 # Reads JSONL from stdin. Progress → stderr, final text → stdout
 STREAM_PARSER='
-import sys, json, time
+import sys, json
 
 class State:
     turn = 0
-    tool_calls = 0
-    model = ""
-    last_tool = ""
     text_started = False
     current_turn_text = []
 
@@ -66,8 +47,7 @@ def stderr(s):
 
 def short_tool_detail(name, args):
     if name == "bash":
-        cmd = args.get("command", "")
-        return cmd[:200]
+        return args.get("command", "")[:200]
     elif name == "read":
         return args.get("path", "")[:200]
     elif name == "grep":
@@ -90,9 +70,8 @@ def format_tool(name, args):
 
 for line in sys.stdin:
     line = line.strip()
-    if not line: continue
-    if line == "SUBAGENT_DONE":
-        break
+    if not line:
+        continue
     try:
         d = json.loads(line)
     except:
@@ -100,33 +79,23 @@ for line in sys.stdin:
 
     t = d.get("type", "")
 
-    if t == "message_start":
-        msg = d.get("message", {})
-        if msg.get("role") == "assistant":
-            m = msg.get("model", "")
-            if m:
-                state.model = m
-
-    elif t == "turn_start":
+    if t == "turn_start":
         state.turn += 1
         state.current_turn_text = []
         state.text_started = False
         stderr(f"\033[2m── turn {state.turn} ──\033[0m")
 
     elif t == "tool_execution_start":
-        if state.current_turn_text != []:
+        if state.current_turn_text:
             stderr("".join(state.current_turn_text).strip())
             state.current_turn_text = []
-        state.tool_calls += 1
         name = d.get("toolName", "?")
         args = d.get("args", d.get("arguments", {}))
-        state.last_tool = name
         stderr(format_tool(name, args))
 
     elif t == "message_update":
         ev = d.get("assistantMessageEvent", {})
-        et = ev.get("type", "")
-        if et == "text_delta":
+        if ev.get("type") == "text_delta":
             delta = ev.get("delta", "")
             if not state.text_started:
                 delta = delta.lstrip("\n")
@@ -140,78 +109,14 @@ for line in sys.stdin:
 
 if state.current_turn_text:
     sys.stdout.write("".join(state.current_turn_text) + "\n")
-    sys.stdout.flush()
 else:
     stderr("\033[31m⚠ No text output from subagent\033[0m")
 '
 
 # ── Build pi args ────────────────────────────────────────────────────────────
-build_pi_args() {
-    local args=(--mode json -p --no-session --thinking "$THINKING" --tools "$TOOLS")
-    [[ -n "$MODEL" ]]    && args+=(--model "$MODEL")
-    [[ -n "$PROVIDER" ]] && args+=(--provider "$PROVIDER")
-    echo "${args[@]}"
-}
-
-# ── Generate session ID ─────────────────────────────────────────────────────
-gen_id() {
-    local ts=$(date +%s)
-    local r=$RANDOM
-    echo "sub-${ts}-${r}"
-}
-
-# ── Command: list ────────────────────────────────────────────────────────────
-if $LIST; then
-    found=0
-    for meta in "$SUBAGENT_DIR"/*.meta; do
-        [[ -f "$meta" ]] || continue
-        found=1
-        id=$(basename "$meta" .meta)
-        source "$meta"
-        echo -e "  ${CYAN}$id${RESET}  model=${SA_MODEL:-?}  tools=${SA_TOOLS:-?}"
-        echo -e "    prompt: ${DIM}${SA_PROMPT:0:80}${RESET}"
-    done
-    if [[ $found -eq 0 ]]; then
-        echo "No subagents."
-    fi
-    exit 0
-fi
-
-# ── Command: result ──────────────────────────────────────────────────────────
-if [[ -n "$RESULT" ]]; then
-    jsonl="$SUBAGENT_DIR/$RESULT.jsonl"
-    if [[ ! -f "$jsonl" ]]; then
-        echo "Subagent '$RESULT' not found." >&2; exit 1
-    fi
-    python3 -c "
-import sys, json
-text_parts = []
-in_final = False
-for line in open('$jsonl'):
-    line = line.strip()
-    if not line or line == 'SUBAGENT_DONE': continue
-    try: d = json.loads(line)
-    except: continue
-    t = d.get('type')
-    if t == 'turn_start':
-        text_parts = []
-    elif t == 'message_update':
-        ev = d.get('assistantMessageEvent', {})
-        if ev.get('type') == 'text_delta':
-            delta = ev.get('delta', '')
-            if not text_parts:
-                delta = delta.lstrip('\n')
-                if not delta:
-                    continue
-            text_parts.append(delta)
-if text_parts:
-    print(''.join(text_parts))
-else:
-    print('(no text output)', file=sys.stderr)
-    sys.exit(1)
-"
-    exit 0
-fi
+args=(--mode json -p --no-session --thinking "$THINKING" --tools "$TOOLS")
+[[ -n "$MODEL" ]]    && args+=(--model "$MODEL")
+[[ -n "$PROVIDER" ]] && args+=(--provider "$PROVIDER")
 
 # ── Validate prompt ──────────────────────────────────────────────────────────
 if [[ -z "$PROMPT" ]]; then
@@ -219,26 +124,5 @@ if [[ -z "$PROMPT" ]]; then
     exit 1
 fi
 
-# ── Run subagent ─────────────────────────────────────────────────────────────
-id=$(gen_id)
-jsonl="$SUBAGENT_DIR/$id.jsonl"
-result_file="$SUBAGENT_DIR/$id.result"
-stderr_file="$SUBAGENT_DIR/$id.stderr"
-meta="$SUBAGENT_DIR/$id.meta"
-
-# Save metadata
-cat > "$meta" <<META
-SA_ID="$id"
-SA_MODEL="${MODEL:-default}"
-SA_TOOLS="$TOOLS"
-SA_THINKING="$THINKING"
-SA_PROMPT="$(echo "$PROMPT" | head -c 200 | sed "s/'/'\\\\''/g")"
-SA_STARTED=$(date +%s)
-META
-
-pi_args=$(build_pi_args)
-echo -e "⚡ Starting subagent ${CYAN}$id${RESET}" >&2
-$PI $pi_args "$PROMPT" 2>"$stderr_file" | tee "$jsonl" | python3 -c "$STREAM_PARSER" | tee "$result_file"
-rc=${PIPESTATUS[0]}
-echo 'SUBAGENT_DONE' >> "$jsonl"
-exit $rc
+# ── Run ──────────────────────────────────────────────────────────────────────
+$PI "${args[@]}" "$PROMPT" 2>&1 | python3 -c "$STREAM_PARSER"

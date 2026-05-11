@@ -1,0 +1,12 @@
+#!/bin/bash
+set -euo pipefail
+
+cd ~/work/main
+git switch main
+git pull origin main
+
+echo "worktree name:"
+read -r WORKTREE_NAME
+git worktree add "../${WORKTREE_NAME}"
+cd "../${WORKTREE_NAME}"
+code .

@@ -1,0 +1,7 @@
+#!/bin/bash
+set -euo pipefail
+
+# CACHE=~/cache/namespace
+# nohup kubectl get ns --no-headers > ${CACHE}.tmp && mv ${CACHE}.tmp ${CACHE}&
+
+kubectl config set-context $(kubectl config current-context) --namespace $(kubectl get ns --no-headers | fzf | awk '{print $1}')

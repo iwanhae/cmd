@@ -1,0 +1,15 @@
+#!/bin/bash
+
+CTX=$(kubectl config current-context)
+NAME=~/.cache/$CTX.knopo
+
+if [ -f "$NAME" ]; then
+  nodes=$(cat "$NAME")
+else
+  nodes=$(kubectl get nodes -o name | sed 's|node/||')
+  echo "$nodes" > "$NAME"
+fi
+
+echo "$nodes" | fzf --prompt="Select Node > " | \
+  xargs -I{} kubectl get pods -w -o wide --all-namespaces --field-selector spec.nodeName={}
+

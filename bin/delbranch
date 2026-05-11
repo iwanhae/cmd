@@ -1,0 +1,8 @@
+#!/bin/bash
+set -euo pipefail
+
+cd ~/work/main
+git switch main
+git pull origin main
+
+git worktree remove "../$(git worktree list | fzf | awk '{print $1}' | xargs basename)"

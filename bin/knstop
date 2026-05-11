@@ -1,0 +1,285 @@
+#!/usr/bin/env python3
+import json
+from collections import defaultdict
+import subprocess
+
+
+def parse_memory(memory_str):
+    """메모리 문자열을 GiB로 변환"""
+    if not memory_str:
+        return 0
+
+    # 'n' 접미사 처리 (나노바이트)
+    if memory_str.endswith("n"):
+        try:
+            value = float(memory_str[:-1])
+            ## 변경: MB -> GiB (1024**3)
+            return value / (1024**3 * 1e9)  # 나노바이트 -> GiB로 변환
+        except Exception:
+            return 0
+
+    units = {"Ki": 1024, "Mi": 1024**2, "Gi": 1024**3}
+    for unit, divisor in units.items():
+        if memory_str.endswith(unit):
+            try:
+                value = float(memory_str[:-2])
+                ## 변경: MB -> GiB (1024**3)
+                return value * divisor / (1024**3)  # GiB로 변환
+            except Exception:
+                return 0
+
+    try:
+        ## 변경: MB -> GiB (1024**3)
+        return float(memory_str) / (1024**3)  # 바이트 -> GiB
+    except Exception:
+        return 0
+
+
+def parse_cpu(cpu_str):
+    """CPU 문자열을 Core로 변환"""
+    if not cpu_str:
+        return 0
+
+    # 'n' 접미사 처리 (나노코어)
+    if cpu_str.endswith("n"):
+        try:
+            value = float(cpu_str[:-1])
+            ## 변경: millicore -> Core (1e9)
+            return value / 1e9  # 나노코어 -> Core로 변환
+        except Exception:
+            return 0
+
+    # 'm' 접미사 처리 (millicore)
+    if cpu_str.endswith("m"):
+        try:
+            ## 변경: millicore -> Core (1000)
+            return float(cpu_str[:-1]) / 1000
+        except Exception:
+            return 0
+
+    try:
+        ## 변경: millicore -> Core
+        return float(cpu_str) # 이미 Core 단위
+    except Exception:
+        return 0
+
+
+def parse_kubernetes_metrics(metrics_data):
+    """Kubernetes metrics를 파싱하여 네임스페이스별 CPU, Memory 사용량 계산"""
+    ## 변경: "pod_count" -> "container_count" (더 명확한 이름으로 변경)
+    namespace_stats = defaultdict(
+        lambda: {"cpu": 0, "memory": 0, "container_count": 0}
+    )
+
+    for metric in metrics_data:
+        try:
+            namespace = metric.get("metadata", {}).get("namespace", "Unknown")
+            containers = metric.get("containers", [])
+
+            for container in containers:
+                usage = container.get("usage", {})
+
+                # CPU 사용량 파싱
+                cpu_str = usage.get("cpu", "0")
+                cpu_value = parse_cpu(cpu_str)
+
+                # Memory 사용량 파싱
+                memory_str = usage.get("memory", "0")
+                memory_value = parse_memory(memory_str)
+
+                namespace_stats[namespace]["cpu"] += cpu_value
+                namespace_stats[namespace]["memory"] += memory_value
+                namespace_stats[namespace]["container_count"] += 1
+        except Exception as e:
+            print(f"메트릭 파싱 에러 발생: {e}")
+            continue
+
+    return namespace_stats
+
+
+def get_total_allocatable_resources():
+    """'kubectl get nodes'를 실행하여 클러스터 전체의 스케줄링 가능(allocatable) 자원을 집계"""
+    print("클러스터의 스케줄링 가능 자원(Allocatable)을 가져옵니다...")
+    total_cpu = 0
+    total_memory = 0
+    
+    try:
+        result = subprocess.run(
+            ["kubectl", "get", "nodes", "-o", "json"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        
+        nodes_data = json.loads(result.stdout)
+        
+        for node in nodes_data.get("items", []):
+            allocatable = node.get("status", {}).get("allocatable", {})
+            
+            cpu_str = allocatable.get("cpu", "0")
+            total_cpu += parse_cpu(cpu_str)
+            
+            memory_str = allocatable.get("memory", "0")
+            total_memory += parse_memory(memory_str)
+            
+        ## 변경: 단위 Core, GiB로 수정
+        print(f"- 총 스케줄링 가능 CPU: {total_cpu:.2f} Core")
+        print(f"- 총 스케줄링 가능 Memory: {total_memory:.2f} GiB")
+        return total_cpu, total_memory
+        
+    except FileNotFoundError:
+        print("에러: 'kubectl' 명령어를 찾을 수 없습니다. 설치 및 PATH 설정을 확인하세요.")
+        return 0, 0
+    except subprocess.CalledProcessError as e:
+        print(f"kubectl 명령어 실행 오류: {e.stderr}")
+        return 0, 0
+    except Exception as e:
+        print(f"노드 정보 파싱 중 에러 발생: {e}")
+        return 0, 0
+
+
+# 1. usage.jsonl 파일 로드 (기존과 동일)
+metrics_data = []
+try:
+    result = subprocess.run(
+        'kubectl get pods.metrics.k8s.io -A -o json | jq ".items[]" -c > usage.jsonl',
+        shell=True,
+        capture_output=True,
+        text=True,
+    )
+
+    if result.returncode != 0:
+        print(f"kubectl 명령어 실행 오류: {result.stderr}")
+        metrics_data = []
+    else:
+        print("usage.jsonl 파일이 생성되었습니다.")
+        with open("usage.jsonl", "r") as f:
+            for line in f:
+                if line.strip():
+                    metrics_data.append(json.loads(line))
+except Exception as e:
+    print(f"에러 발생: {e}")
+    metrics_data = []
+
+print(f"로드된 메트릭 데이터: {len(metrics_data)}개")
+if metrics_data:
+    print("\n첫 번째 항목 샘플:")
+    print(json.dumps(metrics_data[0], indent=2)[:500])
+
+
+# 2. 계산 실행 (기존과 동일)
+namespace_stats = parse_kubernetes_metrics(metrics_data)
+
+# 3. 결과를 딕셔너리 리스트로 변환
+results = [
+    {
+        ## 변경: 단위 Core, GiB 및 정밀도 수정
+        "Namespace": ns,
+        "CPU (Core)": round(stats["cpu"], 4),
+        "Memory (GiB)": round(stats["memory"], 4),
+        "Container Count": stats["container_count"],
+    }
+    for ns, stats in sorted(namespace_stats.items())
+]
+
+# 4. 백분율 계산
+
+## 변경: 변수명 및 단위 수정
+total_used_cpu = sum(r["CPU (Core)"] for r in results)
+total_used_memory = sum(r["Memory (GiB)"] for r in results)
+total_containers = sum(r["Container Count"] for r in results)
+
+## 추가: 총 '스케줄링 가능' 자원 가져오기
+total_allocatable_cpu, total_allocatable_memory = get_total_allocatable_resources()
+
+print("-" * 100)
+
+## 변경: 0으로 나누기 방지 및 기준을 'allocatable'로 변경
+for result in results:
+    if total_allocatable_cpu > 0:
+        ## 변경: millicore -> Core
+        result["CPU %"] = round(
+            result["CPU (Core)"] / total_allocatable_cpu * 100, 2
+        )
+    else:
+        result["CPU %"] = 0.0
+
+    if total_allocatable_memory > 0:
+        ## 변경: MB -> GiB
+        result["Memory %"] = round(
+            result["Memory (GiB)"] / total_allocatable_memory * 100, 2
+        )
+    else:
+        result["Memory %"] = 0.0
+
+# 5. CPU 사용량 기준으로 정렬
+## 변경: millicore -> Core
+results = sorted(results, key=lambda x: x["CPU (Core)"], reverse=True)
+
+
+# 6. 테이블 출력
+print("=" * 100)
+## 변경: 제목에 '(클러스터 전체 대비)' 추가, "Pod Count" -> "Container Count"
+print("네임스페이스별 리소스 사용량 (클러스터 전체 Allocatable 대비, CPU 기준 정렬)")
+print("=" * 100)
+
+# 테이블 출력 (헤더)
+## 변경: 헤더 이름 (Core, GiB) 및 너비 수정
+print(
+    f"{'Namespace':70s} {'CPU (Core)':>12s} {'CPU %':>8s} {'Memory (GiB)':>15s} {'Memory %':>8s} {'Container Count':>15s}"
+)
+print("-" * 130)
+
+# 테이블 출력 (데이터)
+## 변경: 데이터 키 (Core, GiB) 및 소수점 포매팅 수정 (.4f)
+for result in results:
+    print(
+        f"{result['Namespace']:70s} {result['CPU (Core)']:>12.4f} {result['CPU %']:>7.2f}% {result['Memory (GiB)']:>15.4f} {result['Memory %']:>7.2f}% {result['Container Count']:>15d}"
+    )
+
+# 7. 총 요약 (로직 변경)
+print("=" * 100)
+print("\n총 요약:")
+
+total_cpu_percent = (
+    (total_used_cpu / total_allocatable_cpu * 100)
+    if total_allocatable_cpu > 0
+    else 0.0
+)
+total_memory_percent = (
+    (total_used_memory / total_allocatable_memory * 100)
+    if total_allocatable_memory > 0
+    else 0.0
+)
+
+## 변경: 단위 Core, GiB로 수정
+print(
+    f"- 총 CPU 사용량: {total_used_cpu:.2f} / {total_allocatable_cpu:.2f} Core ({total_cpu_percent:.2f}%)"
+)
+print(
+    f"- 총 Memory 사용량: {total_used_memory:.2f} / {total_allocatable_memory:.2f} GiB ({total_memory_percent:.2f}%)"
+)
+## 변경: "GB로 환산" 라인 제거 (이미 GiB)
+print(f"- 총 컨테이너(Container) 수: {total_containers}")
+
+
+# 8. 상위 20개 바 차트 (시각화 로직 변경)
+top_cpu = results[:20]
+
+if top_cpu:
+    ## 변경: millicore -> Core
+    max_cpu_usage = top_cpu[0]["CPU (Core)"]
+    max_bar_width = 40  
+    
+    print("\n상위 20개 네임스페이스 CPU 사용량 (시각화: 최대 사용량 대비)")
+    for result in top_cpu:
+        relative_usage = (
+            (result["CPU (Core)"] / max_cpu_usage) if max_cpu_usage > 0 else 0
+        )
+        bar_length = int(relative_usage * max_bar_width)
+        cpu_bar = "█" * bar_length
+        
+        ## 변경: millicore -> Core (나누기 1000 제거)
+        print(
+            f"  {result['Namespace']:50s} {result['CPU (Core)']:10.2f} core ({result['CPU %']:6.2f}%) {cpu_bar}"
+        )

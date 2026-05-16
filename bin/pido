@@ -132,6 +132,7 @@ rfc3339() {
 
 # ── Run ──────────────────────────────────────────────────────────────────────
 mkdir -p "$PIDO_DIR"
+        [[ -f "$PIDO_DIR/.gitignore" ]] || echo '*' > "$PIDO_DIR/.gitignore"
 TS=$(rfc3339)
 
 $PI "${args[@]}" "$PROMPT" | python3 -c "$STREAM_PARSER" | tee "$PIDO_DIR/$TS"

@@ -5,8 +5,11 @@ cd ~/work/main
 git switch main
 git pull origin main
 
-echo "worktree name:"
-read -r WORKTREE_NAME
+if [ $# -ge 1 ]; then
+  WORKTREE_NAME="$1"
+else
+  echo "worktree name:"
+  read -r WORKTREE_NAME
+fi
 git worktree add "../${WORKTREE_NAME}"
 cd "../${WORKTREE_NAME}"
-code .

@@ -123,3 +123,12 @@ klog
 - `ctrl-r` — reload the pod list
 
 Type to fuzzy-filter the list by any column, including `NODE`.
+
+### `kdebug`
+
+Pick a Kubernetes node (reusing `knopo`'s node cache) and launch an
+interactive debug pod pinned to it via `nodeName` in the current namespace.
+
+```bash
+kdebug
+```

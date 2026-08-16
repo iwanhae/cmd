@@ -1,0 +1,22 @@
+#!/bin/bash
+set -euo pipefail
+
+CTX=$(kubectl config current-context)
+CACHE=~/.cache/$CTX.knopo
+
+if [ -f "$CACHE" ]; then
+  nodes=$(cat "$CACHE")
+else
+  nodes=$(kubectl get nodes -o name | sed 's|node/||')
+  echo "$nodes" > "$CACHE"
+fi
+
+node=$(echo "$nodes" | fzf --prompt="Select Node > ")
+[ -z "$node" ] && exit 1
+
+kubectl run "kdebug-$RANDOM" \
+  --image=vcr.linecorp.com/dataground/tools \
+  --restart=Never \
+  --rm -it \
+  --overrides="{\"apiVersion\":\"v1\",\"spec\":{\"nodeName\":\"$node\"}}" \
+  -- bash

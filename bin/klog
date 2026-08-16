@@ -1,0 +1,61 @@
+#!/bin/bash
+set -euo pipefail
+
+TMPDIR=$(mktemp -d -t klog)
+trap 'rm -rf "$TMPDIR"' EXIT
+STATE="$TMPDIR/containers"
+touch "$STATE"
+
+cat > "$TMPDIR/preview.sh" <<'EOF'
+#!/bin/bash
+pod="$1"
+state="$2"
+containers=$(kubectl get pod "$pod" -o jsonpath='{.spec.containers[*].name}' 2>/dev/null)
+[ -z "$containers" ] && exit 0
+
+chosen=$(grep "^$pod=" "$state" 2>/dev/null | tail -1 | cut -d= -f2)
+[ -z "$chosen" ] && chosen=$(awk '{print $1}' <<< "$containers")
+
+echo -e "\033[1;36mContainers\033[0m  (ctrl-o to switch)"
+for c in $containers; do
+  if [ "$c" = "$chosen" ]; then
+    echo -e "  \033[1;32m● $c\033[0m"
+  else
+    echo "    $c"
+  fi
+done
+echo -e "\033[2m$(printf '%.0s─' $(seq 1 60))\033[0m"
+kubectl logs "$pod" -c "$chosen" --tail=200 2>&1 | bat --style=plain --color=always --paging=never -l log
+EOF
+chmod +x "$TMPDIR/preview.sh"
+
+cat > "$TMPDIR/pick.sh" <<'EOF'
+#!/bin/bash
+pod="$1"
+state="$2"
+chosen=$(kubectl get pod "$pod" -o jsonpath='{.spec.containers[*].name}' 2>/dev/null \
+  | tr ' ' '\n' | fzf --prompt="container ($pod)> " --height=40% --layout=reverse --border)
+[ -n "$chosen" ] && echo "$pod=$chosen" >> "$state"
+EOF
+chmod +x "$TMPDIR/pick.sh"
+
+cat > "$TMPDIR/follow.sh" <<'EOF'
+#!/bin/bash
+pod="$1"
+state="$2"
+chosen=$(grep "^$pod=" "$state" 2>/dev/null | tail -1 | cut -d= -f2)
+[ -z "$chosen" ] && chosen=$(kubectl get pod "$pod" -o jsonpath='{.spec.containers[0].name}' 2>/dev/null)
+clear
+echo "-- following $pod/$chosen (ctrl-c to stop) --"
+kubectl logs -f "$pod" -c "$chosen"
+EOF
+chmod +x "$TMPDIR/follow.sh"
+
+kubectl get pod -o wide | fzf \
+  --header-lines=1 \
+  --header 'enter: follow -f logs   ctrl-o: choose container   ctrl-r: reload pods' \
+  --preview "$TMPDIR/preview.sh {1} $STATE" \
+  --preview-window=right:65%:wrap:follow \
+  --bind "ctrl-o:execute($TMPDIR/pick.sh {1} $STATE)+refresh-preview" \
+  --bind "ctrl-r:reload(kubectl get pod -o wide)" \
+  --bind "enter:execute($TMPDIR/follow.sh {1} $STATE)"

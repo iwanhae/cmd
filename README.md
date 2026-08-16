@@ -107,3 +107,19 @@ Python utility for inspecting Kubernetes resource usage.
 ```bash
 knstop
 ```
+
+### `klog`
+
+Browse pods (`kubectl get pod -o wide`) in the current namespace with `fzf`;
+the preview pane lists the pod's containers and shows the logs (via `bat`) of
+the selected one.
+
+```bash
+klog
+```
+
+- `ctrl-o` — pick which container's logs to preview
+- `enter` — follow (`kubectl logs -f`) the selected container
+- `ctrl-r` — reload the pod list
+
+Type to fuzzy-filter the list by any column, including `NODE`.

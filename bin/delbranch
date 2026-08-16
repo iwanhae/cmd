@@ -9,5 +9,5 @@ else
   TARGET=$(git worktree list | fzf | awk '{print $1}' | xargs basename)
 fi
 
-git worktree remove "../$TARGET"
+git worktree remove --force "../$TARGET"
 rm -rvf "../$TARGET"

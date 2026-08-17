@@ -21,6 +21,14 @@
 - If the instructions to a subagent would be longer than the direct work, the root agent better perform the task directly, even when repository files or tools are involved.
 - Delegate when the task is broad, uncertain, execution-heavy, benefits from a specialized Luna role, or can be partitioned into genuinely useful independent workstreams.
 
+## Delegated-scope ownership
+
+- Once the root delegates a bounded scope, the assigned subagent owns that scope until it returns a handoff or the root interrupts it.
+- While that subagent is active, the root must not perform overlapping exploration, implementation, troubleshooting, tests, builds, or validation. The root may continue user communication, decision-making, and clearly non-overlapping work.
+- The root must wait for and evaluate the handoff before reading or executing within the delegated scope. Any follow-up inspection must be narrowly targeted to verify specific claims, resolve reported gaps, or perform the required Sol review gate; do not repeat the delegated investigation broadly.
+- If the root needs to take over the scope before handoff, it must interrupt the subagent first and then continue directly. Do not run duplicate work in parallel.
+- Do not delegate a task unless the root intends to use its result.
+
 ## Agent routing
 
 - Use `explorer` for read-only codebase mapping, execution-flow tracing, dependency discovery, and evidence gathering.

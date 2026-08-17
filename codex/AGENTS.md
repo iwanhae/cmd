@@ -18,7 +18,7 @@
 ## Delegation threshold
 
 - Before delegating, compare the effort required to write a complete delegation task packet and review the result with the effort required to perform the task directly.
-- If the instructions to a subagent would be longer than the direct work, the root agent should perform the task directly, even when repository files or tools are involved.
+- If the instructions to a subagent would be longer than the direct work, the root agent better perform the task directly, even when repository files or tools are involved.
 - Delegate when the task is broad, uncertain, execution-heavy, benefits from a specialized Luna role, or can be partitioned into genuinely useful independent workstreams.
 
 ## Agent routing

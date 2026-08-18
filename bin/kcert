@@ -1,0 +1,28 @@
+#!/bin/bash
+set -euo pipefail
+
+epoch_of() {
+  local enddate="$1"
+  if date -j -f "%b %d %T %Y %Z" "$enddate" +%s 2>/dev/null; then
+    return
+  fi
+  date -d "$enddate" +%s
+}
+
+now=$(date +%s)
+rows=""
+
+while IFS=$'\t' read -r ns name crt; do
+  [ -z "$crt" ] && continue
+  enddate=$(echo "$crt" | base64 -d | openssl x509 -noout -enddate 2>/dev/null | sed 's/^notAfter=//')
+  [ -z "$enddate" ] && continue
+  end_epoch=$(epoch_of "$enddate")
+  days=$(( (end_epoch - now) / 86400 ))
+  rows+="$ns\t$name\t$days\t$enddate\n"
+done < <(kubectl get secrets -A --field-selector type==kubernetes.io/tls -o json \
+  | jq -r '.items[] | [.metadata.namespace, .metadata.name, .data."tls.crt"] | @tsv')
+
+{
+  printf "NAMESPACE\tSECRET\tDAYS_LEFT\tEXPIRY\n"
+  echo -en "$rows" | sort -t$'\t' -k3 -n
+} | column -t -s$'\t'

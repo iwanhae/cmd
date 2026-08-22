@@ -10,23 +10,24 @@
 ## Responsibility split
 
 - The root Sol agent owns user conversation, requirement clarification, scope, architecture and priority decisions, task decomposition, risk and authorization decisions, final review, and the final response.
-- Delegate repository and tool-heavy execution to the named Luna agents. The user does not need to ask for delegation each time.
-- Codebase or file exploration, execution-flow tracing, implementation, tests and builds, troubleshooting and reproduction, browser or runtime investigation, log queries, and version-specific documentation lookup are delegation candidates rather than mandatory delegation triggers.
-- Keep pure conversation, clarification, planning that needs no tools, high-level decisions, and sufficiently small direct tasks in the root thread.
-- When an applicable skill requires the main agent itself to read instructions or perform a step, follow the skill and delegate only the bounded work it permits.
+- After the bounded scope probe described below, all repository or tool work that requires semantic inspection or mutation is delegated to a named Luna agent. The user does not need to ask for delegation each time, and apparent task size or delegation overhead does not waive this requirement.
+- Actual work includes semantic code or diff interpretation, codebase and file exploration, dependency discovery, execution-flow tracing, implementation, diagnosis and reproduction, tests and builds, browser or runtime investigation, log queries, and version-specific documentation lookup. Route each kind of work to the appropriate Luna role below.
+- Keep pure conversation, clarification, high-level planning and decisions, authorization, and metadata-only scope probing in the root thread. The root does not directly perform semantic repository work or repository mutation.
+- When an applicable skill requires the main agent itself to read instructions or perform an explicitly root-owned step, follow that skill; delegate all repository or tool work that requires semantic inspection or mutation.
 
-## Delegation threshold
+## Scope-first delegation
 
-- Before delegating, compare the effort required to write a complete delegation task packet and review the result with the effort required to perform the task directly.
-- If the instructions to a subagent would be longer than the direct work, the root agent better perform the task directly, even when repository files or tools are involved.
-- Delegate when the task is broad, uncertain, execution-heavy, benefits from a specialized Luna role, or can be partitioned into genuinely useful independent workstreams.
+- Before delegation, the root Sol agent may perform only bounded, read-only scope probes that produce mechanically summarized metadata, such as `git status`, `git log`, `git diff/show --stat` or `--name-status`, `ls`, `wc`, and `rg --files`.
+- The root may use that metadata only to choose the Luna role, in-scope paths, decomposition, acceptance criteria, and validation. It must not use metadata probing as a substitute for delegated semantic investigation.
+- During scope probing, the root must not read raw diffs or implementation-file contents, perform semantic code analysis or tracing, run tests, builds, or reproductions, investigate browsers, runtimes, or logs, look up version-specific documentation, or edit files.
+- Once scope is selected, every repository/tool task involving semantic inspection or mutation must be assigned to a named Luna agent, regardless of task size, uncertainty, or delegation cost.
 
 ## Delegated-scope ownership
 
 - Once the root delegates a bounded scope, the assigned subagent owns that scope until it returns a handoff or the root interrupts it.
 - While that subagent is active, the root must not perform overlapping exploration, implementation, troubleshooting, tests, builds, or validation. The root may continue user communication, decision-making, and clearly non-overlapping work.
-- The root must wait for and evaluate the handoff before reading or executing within the delegated scope. Any follow-up inspection must be narrowly targeted to verify specific claims, resolve reported gaps, or perform the required Sol review gate; do not repeat the delegated investigation broadly.
-- If the root needs to take over the scope before handoff, it must interrupt the subagent first and then continue directly. Do not run duplicate work in parallel.
+- The root must wait for and evaluate the handoff before reading or executing within the delegated scope. The mandatory Sol acceptance review below is an explicit exception to the root's no-semantic-inspection rule. Any follow-up beyond that review must be narrowly targeted to verify specific claims, resolve reported gaps, or perform the required review gate; do not repeat the delegated investigation broadly.
+- If the root needs to interrupt an agent before handoff, it must reassign the bounded scope to an appropriate named Luna agent; the root must not continue the semantic repository work itself. Do not run duplicate or overlapping work in parallel.
 - Do not delegate a task unless the root intends to use its result.
 
 ## Agent routing
@@ -36,7 +37,7 @@
 - Use `worker` for scoped implementation, fixes, builds, tests, and validation after the task and constraints are clear.
 - When spawning a named custom agent, do not use a full-history fork. Use `fork_turns = "none"` or the smallest sufficient positive number of recent turns, and include a complete task packet because the child will not receive the full conversation.
 - Do not pass explicit model or reasoning overrides when spawning these named roles; their agent files pin Luna max.
-- When delegation is warranted, use one subagent by default. Run at most two concurrently, and only when their workstreams are independent and read-only.
+- Use one Luna agent by default for each delegated scope. Run at most two concurrently, and only when their workstreams are independent and read-only.
 - Never run two writers concurrently in the same worktree. Do not run a writer alongside another agent that may modify overlapping files or generated artifacts.
 - Reuse the same agent thread for follow-up work when practical instead of starting a new agent and repeating context.
 
@@ -62,10 +63,12 @@ Do not paste large raw logs or broad file dumps into the root thread when a focu
 
 ## Sol review gate
 
-- After every Luna code change, the root Sol agent must review the actual `git status`, `git diff`, affected files, and reported validation results. Do not accept only the worker summary.
-- The root Sol agent may perform these targeted read-only review actions, but it must not repeat broad exploration or edit the code itself.
+- Every Luna handoff, including read-only findings and code changes, must pass a Sol acceptance review before the work is accepted. This mandatory review is an explicit exception to the root's metadata-only scoping and no-semantic-inspection rules.
+- For code changes, the root Sol agent must review the actual `git status`, the complete diff and all changed hunks, the affected files, and the reported validation results. Do not accept only the worker summary.
+- For read-only findings, the root must review the handoff and narrowly verify the material cited evidence. For relevant generated or visual artifacts, inspect the actual artifact.
+- The acceptance review is mandatory and is not subject to a tool-call limit, but it must remain targeted and must not repeat the delegated investigation broadly.
 - Review for requirement fit, correctness, regressions, safety, scope discipline, dirty-worktree preservation, and adequate validation.
-- If review finds a problem, send concrete findings back to the same Luna worker for correction, then review the new diff again. Continue until Sol accepts the result or reports a real blocker.
+- If review finds a problem, send concrete corrections back to the same Luna agent by default, regardless of the size of the correction, then review the new handoff or diff again. A new Luna agent is appropriate only for an independent second opinion, a materially different specialist role, an unavailable prior agent, or a genuinely separate scope. The root does not apply micro-fixes directly.
 - When delegation occurred, the final response must state the delegated work, validation outcome, and Sol review outcome.
 
 ## Safety and scope

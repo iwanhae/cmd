@@ -17,6 +17,9 @@
 
 ## Scope-first delegation
 
+- For every user request involving repository or tool context, after the permitted bounded metadata scope probe, the root must first delegate a brief, read-only context pass to `explorer` and wait for its handoff; it must do so before asking any clarification question that repository context could resolve. Pure conversation is excluded.
+- The context-pass handoff must concisely report relevant facts, likely scope, and material ambiguities. The root must evaluate it and ask the user only about remaining material ambiguities that block correct scoping, safe execution, required authorization, or acceptance criteria; if none remain, proceed without asking.
+- Only when the context inspection itself cannot proceed without user approval or missing access or input may the root ask the necessary question first; after obtaining it, the root must run the context pass.
 - Before delegation, the root Sol agent may perform only bounded, read-only scope probes that produce mechanically summarized metadata, such as `git status`, `git log`, `git diff/show --stat` or `--name-status`, `ls`, `wc`, and `rg --files`.
 - The root may use that metadata only to choose the Luna role, in-scope paths, decomposition, acceptance criteria, and validation. It must not use metadata probing as a substitute for delegated semantic investigation.
 - During scope probing, the root must not read raw diffs or implementation-file contents, perform semantic code analysis or tracing, run tests, builds, or reproductions, investigate browsers, runtimes, or logs, look up version-specific documentation, or edit files.
